@@ -5,12 +5,63 @@
   <title>WebRTC 1:1 Demo</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
-    body { font-family: system-ui, Arial; padding: 12px; }
-    video { width: 45%; max-height: 60vh; background: #000; margin-right: 5px; }
-    #videos { display:flex; align-items:center; gap:10px; margin-top:12px; flex-wrap:wrap; }
-    #controls { margin-top:12px; }
-    input, button { padding:8px; margin-right:6px; }
+    body {
+    background: linear-gradient(135deg, #1e3c72, #2a5298);
+    color: #f0f0f0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    margin: 0;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+  }
+  h1 {
+    margin-bottom: 10px;
+  }
+  #videos {
+    display: flex;
+    gap: 15px;
+    margin-top: 15px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  video {
+    border-radius: 12px;
+    box-shadow: 0 0 15px rgba(0,0,0,0.5);
+    max-width: 45vw;
+    max-height: 50vh;
+    background: black;
+  }
+  #controls, div > input, div > button {
+    margin-top: 15px;
+  }
+  input, button {
+    padding: 10px 16px;
+    font-size: 1rem;
+    border-radius: 6px;
+    border: none;
+    outline: none;
+  }
+  input {
+    width: 200px;
+    margin-right: 10px;
+  }
+  button {
+    background-color: #007bff;
+    color: white;
+    cursor: pointer;
+    transition: background-color 0.25s ease;
+  }
+  button:disabled {
+    background-color: #555;
+    cursor: not-allowed;
+  }
+  button:hover:not(:disabled) {
+    background-color: #0056b3;
+  }
   </style>
+
 </head>
 <body>
   <h1>WebRTC 1:1 (audio + video)</h1>
