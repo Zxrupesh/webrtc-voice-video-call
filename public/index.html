@@ -1,0 +1,200 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>WebRTC 1:1 Demo</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: system-ui, Arial; padding: 12px; }
+    video { width: 45%; max-height: 60vh; background: #000; margin-right: 5px; }
+    #videos { display:flex; align-items:center; gap:10px; margin-top:12px; flex-wrap:wrap; }
+    #controls { margin-top:12px; }
+    input, button { padding:8px; margin-right:6px; }
+  </style>
+</head>
+<body>
+  <h1>WebRTC 1:1 (audio + video)</h1>
+
+  <div>
+    <input id="roomInput" placeholder="room name" value="testroom" />
+    <button id="joinBtn">Join</button>
+    <button id="leaveBtn" disabled>Leave</button>
+  </div>
+
+  <div id="videos">
+    <video id="localVideo" autoplay muted playsinline></video>
+    <video id="remoteVideo" autoplay playsinline></video>
+  </div>
+
+  <div id="controls">
+    <button id="toggleAudio" disabled>Mute</button>
+    <button id="toggleVideo" disabled>Hide Camera</button>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+  (function(){
+    const socket = io();
+
+    let pc = null;
+    let localStream = null;
+    let roomId = null;
+    let tracksAdded = false;
+
+    const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+    const localVideo = document.getElementById('localVideo');
+    const remoteVideo = document.getElementById('remoteVideo');
+    const joinBtn = document.getElementById('joinBtn');
+    const leaveBtn = document.getElementById('leaveBtn');
+    const roomInput = document.getElementById('roomInput');
+    const toggleAudio = document.getElementById('toggleAudio');
+    const toggleVideo = document.getElementById('toggleVideo');
+
+    joinBtn.onclick = async () => {
+      roomId = roomInput.value.trim();
+      if (!roomId) return alert('Enter a room name');
+      joinBtn.disabled = true;
+      await startLocalStream();
+      socket.emit('join', roomId);
+    };
+
+    leaveBtn.onclick = () => {
+      socket.emit('leave', roomId);
+      cleanup();
+    };
+
+    async function startLocalStream() {
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+        localVideo.srcObject = localStream;
+        toggleAudio.disabled = false;
+        toggleVideo.disabled = false;
+        leaveBtn.disabled = false;
+        createPeerConnection();
+        addLocalTracks(); // add tracks once
+      } catch (err) {
+        console.error('getUserMedia error', err);
+        alert('Microphone / camera access required: ' + err.message);
+        joinBtn.disabled = false;
+      }
+    }
+
+    function createPeerConnection() {
+      if (pc) return;
+      pc = new RTCPeerConnection(config);
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          socket.emit('ice-candidate', { roomId, candidate: event.candidate });
+        }
+      };
+
+      pc.ontrack = (event) => {
+        // first stream in tracks
+        remoteVideo.srcObject = event.streams[0];
+      };
+
+      pc.onconnectionstatechange = () => {
+        console.log('PC state:', pc.connectionState);
+      };
+    }
+
+    function addLocalTracks() {
+      if (!localStream || !pc || tracksAdded) return;
+      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+      tracksAdded = true;
+    }
+
+    // Socket handlers
+    socket.on('joined', async ({ roomId: r, numClients }) => {
+      console.log('joined', r, 'clients:', numClients);
+      // If room already had someone (numClients > 1) then this client should create an offer
+      if (numClients > 1) {
+        // create offer
+        try {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          socket.emit('offer', { roomId: r, desc: pc.localDescription });
+        } catch (err) { console.error('createOffer error', err); }
+      }
+    });
+
+    socket.on('offer', async ({ desc, from }) => {
+      console.log('received offer from', from);
+      if (!pc) createPeerConnection();
+      if (!localStream) {
+        await startLocalStream();
+      } else {
+        addLocalTracks();
+      }
+      await pc.setRemoteDescription(desc);
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socket.emit('answer', { roomId, desc: pc.localDescription });
+    });
+
+    socket.on('answer', async ({ desc }) => {
+      console.log('received answer');
+      await pc.setRemoteDescription(desc);
+    });
+
+    socket.on('ice-candidate', async ({ candidate }) => {
+      try {
+        await pc.addIceCandidate(candidate);
+      } catch(e) {
+        console.warn('Error adding remote ICE candidate', e);
+      }
+    });
+
+    socket.on('peer-left', (id) => {
+      console.log('peer left', id);
+      cleanupRemote();
+    });
+
+    function cleanupRemote() {
+      if (remoteVideo.srcObject) {
+        remoteVideo.srcObject.getTracks().forEach(t => t.stop());
+      }
+      remoteVideo.srcObject = null;
+    }
+
+    function cleanup() {
+      if (pc) {
+        try { pc.getSenders().forEach(s => { if (s.track) pc.removeTrack(s); }); } catch(e){}
+        pc.close();
+        pc = null;
+      }
+      if (localStream) {
+        localStream.getTracks().forEach(t => t.stop());
+        localStream = null;
+      }
+      localVideo.srcObject = null;
+      remoteVideo.srcObject = null;
+      tracksAdded = false;
+      joinBtn.disabled = false;
+      leaveBtn.disabled = true;
+      toggleAudio.disabled = true;
+      toggleVideo.disabled = true;
+    }
+
+    toggleAudio.onclick = () => {
+      if (!localStream) return;
+      const t = localStream.getAudioTracks()[0];
+      if (!t) return;
+      t.enabled = !t.enabled;
+      toggleAudio.textContent = t.enabled ? 'Mute' : 'Unmute';
+    };
+
+    toggleVideo.onclick = () => {
+      if (!localStream) return;
+      const t = localStream.getVideoTracks()[0];
+      if (!t) return;
+      t.enabled = !t.enabled;
+      toggleVideo.textContent = t.enabled ? 'Hide Camera' : 'Show Camera';
+    };
+
+  })();
+  </script>
+</body>
+</html>
