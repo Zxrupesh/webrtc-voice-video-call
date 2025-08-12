@@ -8,10 +8,15 @@ let currentRoomId = null;
 
 const config = {
   iceServers: [
-    { urls: "stun:stun.l.google.com:19302" }
-    // Add TURN here when you have credentials
-  ],
+    { urls: "stun:stun.l.google.com:19302" },
+    {
+      urls: "turn:numb.viagenie.ca",
+      username: "webrtc@live.com",
+      credential: "muazkh"
+    }
+  ]
 };
+
 
 // UI elements
 const roomInput = document.getElementById("roomId");
