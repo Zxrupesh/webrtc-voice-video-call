@@ -2,7 +2,8 @@
 const express = require('express');
 const app = express();
 const http = require('http').createServer(app);
-const io = require('socket.io')(http);
+const { Server } = require('socket.io');
+const io = new Server(http);
 
 const PORT = process.env.PORT || 3000;
 
@@ -13,35 +14,55 @@ io.on('connection', (socket) => {
 
   socket.on('join', (roomId) => {
     socket.join(roomId);
+
+    // Build list of other socket ids in the room
     const clients = io.sockets.adapter.rooms.get(roomId);
-    const numClients = clients ? clients.size : 0;
-    console.log(`${socket.id} joined ${roomId} (clients: ${numClients})`);
-    // Tell the joining client how many are in the room
-    socket.emit('joined', { roomId, numClients });
-    // Tell others in the room someone joined
-    socket.to(roomId).emit('peer-joined', { socketId: socket.id, numClients });
+    const otherIds = [];
+    if (clients) {
+      for (const id of clients) {
+        if (id !== socket.id) otherIds.push(id);
+      }
+    }
+
+    console.log(`${socket.id} joined ${roomId} (clients: ${clients ? clients.size : 0})`);
+
+    // Tell the joining client who is already in the room
+    socket.emit('joined', { roomId, otherIds });
+
+    // Tell others that a new user joined
+    socket.to(roomId).emit('user-joined', { socketId: socket.id });
   });
 
-  socket.on('offer', ({ roomId, desc }) => {
-    socket.to(roomId).emit('offer', { desc, from: socket.id });
+  // Forwarding signaling messages to a specific socket id
+  socket.on('offer', ({ to, desc, from }) => {
+    if (!to) return;
+    io.to(to).emit('offer', { desc, from });
   });
 
-  socket.on('answer', ({ roomId, desc }) => {
-    socket.to(roomId).emit('answer', { desc, from: socket.id });
+  socket.on('answer', ({ to, desc, from }) => {
+    if (!to) return;
+    io.to(to).emit('answer', { desc, from });
   });
 
-  socket.on('ice-candidate', ({ roomId, candidate }) => {
-    socket.to(roomId).emit('ice-candidate', { candidate, from: socket.id });
+  socket.on('ice-candidate', ({ to, candidate, from }) => {
+    if (!to) return;
+    io.to(to).emit('ice-candidate', { candidate, from });
   });
 
   socket.on('leave', (roomId) => {
     socket.leave(roomId);
-    socket.to(roomId).emit('peer-left', socket.id);
+    socket.to(roomId).emit('user-left', { socketId: socket.id });
   });
 
   socket.on('disconnect', () => {
+    // Broadcast disconnect to all rooms the socket was in
+    const rooms = socket.rooms;
+    for (const roomId of rooms) {
+      if (roomId === socket.id) continue;
+      socket.to(roomId).emit('user-left', { socketId: socket.id });
+    }
     console.log('socket disconnected', socket.id);
   });
 });
 
-http.listen(PORT, () => console.log(`Server listening on http://localhost:${PORT}`));
+http.listen(PORT, '0.0.0.0', () => console.log(`Server listening on port ${PORT}`));
