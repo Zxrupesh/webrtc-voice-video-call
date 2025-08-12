@@ -1,3 +1,4 @@
+// client.js
 const socket = io();
 let localStream;
 let peerConnection;
