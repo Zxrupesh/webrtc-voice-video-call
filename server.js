@@ -12,28 +12,28 @@ io.on('connection', (socket) => {
 
   socket.on('join', (roomId) => {
     socket.join(roomId);
-    const clients = io.sockets.adapter.rooms.get(roomId);
-    const numClients = clients ? clients.size : 0;
+    const clients = Array.from(io.sockets.adapter.rooms.get(roomId) || []);
+    const numClients = clients.length;
 
     console.log(`${socket.id} joined ${roomId} (clients: ${numClients})`);
 
-    // Send joined info back to this client
-    socket.emit('joined', { roomId, numClients, yourId: socket.id });
+    // Send to the joining client: your ID + all other client IDs in room
+    socket.emit('joined', { roomId, numClients, yourId: socket.id, others: clients.filter(id => id !== socket.id) });
 
-    // Notify other clients in the room
+    // Notify existing clients that a new peer joined
     socket.to(roomId).emit('peer-joined', { socketId: socket.id });
   });
 
-  socket.on('offer', ({ roomId, desc, to }) => {
-    if (to) io.to(to).emit('offer', { desc, from: socket.id });
+  socket.on('offer', ({ desc, to }) => {
+    io.to(to).emit('offer', { desc, from: socket.id });
   });
 
-  socket.on('answer', ({ roomId, desc, to }) => {
-    if (to) io.to(to).emit('answer', { desc, from: socket.id });
+  socket.on('answer', ({ desc, to }) => {
+    io.to(to).emit('answer', { desc, from: socket.id });
   });
 
-  socket.on('ice-candidate', ({ roomId, candidate, to }) => {
-    if (to) io.to(to).emit('ice-candidate', { candidate, from: socket.id });
+  socket.on('ice-candidate', ({ candidate, to }) => {
+    io.to(to).emit('ice-candidate', { candidate, from: socket.id });
   });
 
   socket.on('leave', (roomId) => {
@@ -50,4 +50,4 @@ io.on('connection', (socket) => {
   });
 });
 
-http.listen(PORT, () => console.log(`Server listening on http://localhost:${PORT}`));
+http.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
