@@ -1,7 +1,7 @@
 // client.js
 const socket = io();
 let localStream;
-let peerConnection;
+let peerConnections = {}; // Track multiple peers
 let currentRoomId = null;
 
 const config = {
@@ -21,13 +21,11 @@ const leaveBtn = document.getElementById("leaveBtn");
 const localVideo = document.getElementById("localVideo");
 const remoteVideo = document.getElementById("remoteVideo");
 
-// Join button
 joinBtn.onclick = async () => {
   const roomId = roomInput.value.trim();
   if (!roomId) return alert("Enter a room ID");
   currentRoomId = roomId;
 
-  // Get user media with optimized resolution & framerate
   localStream = await navigator.mediaDevices.getUserMedia({
     video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 20 } },
     audio: true
@@ -37,81 +35,88 @@ joinBtn.onclick = async () => {
   socket.emit("join", roomId);
 };
 
-// Leave button
 leaveBtn.onclick = () => {
   socket.emit("leave", currentRoomId);
-  if (peerConnection) {
-    peerConnection.close();
-    peerConnection = null;
+  for (let id in peerConnections) {
+    peerConnections[id].close();
   }
+  peerConnections = {};
   localVideo.srcObject = null;
   remoteVideo.srcObject = null;
 };
 
-// Socket events
+// When you join the room
 socket.on("joined", async ({ roomId, numClients }) => {
-  if (numClients > 1) {
-    startPeerConnection();
+  console.log("Joined room", roomId, "Clients:", numClients);
+});
 
-    // Create offer if you are the second user
-    const offer = await peerConnection.createOffer();
-    // Limit video bitrate to 1500 kbps
-    offer.sdp = offer.sdp.replace(/a=mid:video\r\n/g, "a=mid:video\r\nb=AS:1500\r\n");
-    await peerConnection.setLocalDescription(offer);
-    socket.emit("offer", { roomId: currentRoomId, desc: offer });
+// When a new peer joins
+socket.on("peer-joined", async ({ socketId }) => {
+  console.log("Peer joined:", socketId);
+  createPeerConnection(socketId, true);
+});
+
+// Receive offer
+socket.on("offer", async ({ from, desc }) => {
+  if (!peerConnections[from]) {
+    createPeerConnection(from, false);
+  }
+  await peerConnections[from].setRemoteDescription(new RTCSessionDescription(desc));
+  const answer = await peerConnections[from].createAnswer();
+  await peerConnections[from].setLocalDescription(answer);
+  socket.emit("answer", { roomId: currentRoomId, desc: answer, to: from });
+});
+
+// Receive answer
+socket.on("answer", async ({ from, desc }) => {
+  if (peerConnections[from]) {
+    await peerConnections[from].setRemoteDescription(new RTCSessionDescription(desc));
   }
 });
 
-socket.on("peer-joined", () => {
-  startPeerConnection();
-});
-
-socket.on("offer", async ({ desc }) => {
-  if (!peerConnection) startPeerConnection();
-
-  await peerConnection.setRemoteDescription(new RTCSessionDescription(desc));
-  const answer = await peerConnection.createAnswer();
-  answer.sdp = answer.sdp.replace(/a=mid:video\r\n/g, "a=mid:video\r\nb=AS:1500\r\n");
-  await peerConnection.setLocalDescription(answer);
-
-  socket.emit("answer", { roomId: currentRoomId, desc: answer });
-});
-
-socket.on("answer", async ({ desc }) => {
-  await peerConnection.setRemoteDescription(new RTCSessionDescription(desc));
-});
-
-socket.on("ice-candidate", ({ candidate }) => {
-  if (candidate && peerConnection) {
-    peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+// Receive ICE candidates
+socket.on("ice-candidate", ({ from, candidate }) => {
+  if (peerConnections[from] && candidate) {
+    peerConnections[from].addIceCandidate(new RTCIceCandidate(candidate));
   }
 });
 
-// Create PeerConnection
-function startPeerConnection() {
-  if (peerConnection) return;
+socket.on("peer-left", (socketId) => {
+  console.log("Peer left:", socketId);
+  if (peerConnections[socketId]) {
+    peerConnections[socketId].close();
+    delete peerConnections[socketId];
+  }
+});
 
-  peerConnection = new RTCPeerConnection(config);
+function createPeerConnection(peerId, isOfferer) {
+  const pc = new RTCPeerConnection(config);
+  peerConnections[peerId] = pc;
 
   // Add local tracks
-  localStream.getTracks().forEach(track => {
-    peerConnection.addTrack(track, localStream);
-  });
+  localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
   // Remote track
-  peerConnection.ontrack = (event) => {
+  pc.ontrack = (event) => {
     remoteVideo.srcObject = event.streams[0];
   };
 
   // ICE candidates
-  peerConnection.onicecandidate = (event) => {
+  pc.onicecandidate = (event) => {
     if (event.candidate) {
-      socket.emit("ice-candidate", { roomId: currentRoomId, candidate: event.candidate });
+      socket.emit("ice-candidate", { roomId: currentRoomId, candidate: event.candidate, to: peerId });
     }
   };
 
-  // ICE connection state logging
-  peerConnection.oniceconnectionstatechange = () => {
-    console.log("ICE connection state:", peerConnection.iceConnectionState);
+  pc.oniceconnectionstatechange = () => {
+    console.log(`ICE state with ${peerId}:`, pc.iceConnectionState);
   };
+
+  if (isOfferer) {
+    pc.onnegotiationneeded = async () => {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.emit("offer", { roomId: currentRoomId, desc: offer, to: peerId });
+    };
+  }
 }
