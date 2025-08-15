@@ -8,11 +8,7 @@ let remoteSocketId = null;
 const config = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
-    {
-      urls: "turn:numb.viagenie.ca",
-      username: "webrtc@live.com",
-      credential: "muazkh"
-    }
+    { urls: "turn:numb.viagenie.ca", username: "webrtc@live.com", credential: "muazkh" }
   ]
 };
 
@@ -54,20 +50,19 @@ leaveBtn.onclick = () => {
 };
 
 // Socket events
-socket.on("joined", async ({ roomId, numClients, yourId }) => {
-  console.log("joined", roomId, numClients);
+socket.on("joined", async ({ roomId, numClients, yourId, others }) => {
+  console.log("joined", roomId, numClients, "others:", others);
 
-  if (numClients > 1) {
-    // You are the second user
+  if (others.length > 0) {
+    // There is already someone in the room → start connection with them
+    remoteSocketId = others[0];
     startPeerConnection();
-    // Get remote peer id
-    const clients = Array.from(socket.adapter?.rooms?.get(roomId) || []);
-    remoteSocketId = clients.find(id => id !== yourId);
     await createAndSendOffer();
   }
 });
 
 socket.on("peer-joined", ({ socketId }) => {
+  console.log("peer-joined", socketId);
   remoteSocketId = socketId;
   startPeerConnection();
 });
@@ -79,11 +74,10 @@ socket.on("offer", async ({ desc, from }) => {
 
   await peerConnection.setRemoteDescription(new RTCSessionDescription(desc));
   const answer = await peerConnection.createAnswer();
-  // Limit video bitrate
   answer.sdp = answer.sdp.replace(/a=mid:video\r\n/g, "a=mid:video\r\nb=AS:1500\r\n");
   await peerConnection.setLocalDescription(answer);
 
-  socket.emit("answer", { roomId: currentRoomId, desc: answer, to: from });
+  socket.emit("answer", { desc: answer, to: from });
 });
 
 socket.on("answer", async ({ desc }) => {
@@ -111,7 +105,7 @@ function startPeerConnection() {
 
   peerConnection.onicecandidate = (event) => {
     if (event.candidate && remoteSocketId) {
-      socket.emit("ice-candidate", { roomId: currentRoomId, candidate: event.candidate, to: remoteSocketId });
+      socket.emit("ice-candidate", { candidate: event.candidate, to: remoteSocketId });
     }
   };
 
@@ -127,6 +121,6 @@ async function createAndSendOffer() {
   await peerConnection.setLocalDescription(offer);
 
   if (remoteSocketId) {
-    socket.emit("offer", { roomId: currentRoomId, desc: offer, to: remoteSocketId });
+    socket.emit("offer", { desc: offer, to: remoteSocketId });
   }
 }
